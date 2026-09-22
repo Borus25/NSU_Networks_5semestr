@@ -1,0 +1,39 @@
+services:
+  node1:
+    build: .
+    container_name: mcast-node1
+    command: ["224.10.10.10"]
+    networks:
+      labnet:
+        ipv4_address: 172.28.0.11
+    tty: true
+
+  node2:
+    build: .
+    container_name: mcast-node2
+    command: ["224.10.10.10"]
+    networks:
+      labnet:
+        ipv4_address: 172.28.0.12
+    tty: true
+
+  node3:
+    build: .
+    container_name: mcast-node3
+    command: ["224.10.10.10"]
+    networks:
+      labnet:
+        ipv4_address: 172.28.0.13
+    tty: true
+
+networks:
+  labnet:
+    driver: bridge
+#    driver_opts:
+#      # Включаем multicast querier на самом Linux bridge - без этого
+#      # ядро может не форвардить multicast-кадры между контейнерами,
+#      # подключёнными к одной bridge-сети.
+#      com.docker.network.bridge.enable_ip_masquerade: "true"
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
