@@ -11,7 +11,7 @@ COPY . .
 
 # CGO_ENABLED=0 - статическая линковка, бинарник не тянет зависимостей
 # от libc внутри alpine-образа
-RUN CGO_ENABLED=0 GOOS=linux go build -o /discovery src/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -o /discovery Task1/src
 
 # ---- Стадия 2: минимальный runtime-образ ----
 FROM alpine:3.20
