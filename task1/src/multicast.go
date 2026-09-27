@@ -1,21 +1,37 @@
 package main
 
 import (
+	"fmt"
 	"net"
 
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
 )
 
-const groupPort = 1488
+const multicastHopLimit = 1
 
-func listenGroup(network string, groupAddr *net.UDPAddr) (*net.UDPConn, error) {
-	return net.ListenMulticastUDP(network, nil, groupAddr)
+func listenGroup(network string, ifi *net.Interface, groupAddr *net.UDPAddr) (*net.UDPConn, error) {
+	return net.ListenMulticastUDP(network, ifi, groupAddr)
 }
 
-func enableLoopback(conn *net.UDPConn, network string) error {
+func configureInterfaceAndLoopback(conn *net.UDPConn, network string, ifi *net.Interface) error {
 	if network == "udp4" {
-		return ipv4.NewPacketConn(conn).SetMulticastLoopback(true)
+		pc := ipv4.NewPacketConn(conn)
+		if err := pc.SetMulticastInterface(ifi); err != nil {
+			return fmt.Errorf("select IPv4 send interface: %w", err)
+		}
+		if err := pc.SetMulticastTTL(multicastHopLimit); err != nil {
+			return fmt.Errorf("set IPv4 multicast TTL: %w", err)
+		}
+		return pc.SetMulticastLoopback(true)
 	}
-	return ipv6.NewPacketConn(conn).SetMulticastLoopback(true)
+
+	pc := ipv6.NewPacketConn(conn)
+	if err := pc.SetMulticastInterface(ifi); err != nil {
+		return fmt.Errorf("select IPv6 send interface: %w", err)
+	}
+	if err := pc.SetMulticastHopLimit(multicastHopLimit); err != nil {
+		return fmt.Errorf("set IPv6 multicast Hop Limit: %w", err)
+	}
+	return pc.SetMulticastLoopback(true)
 }

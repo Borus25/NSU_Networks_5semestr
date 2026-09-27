@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
-	"os"
 	"time"
 )
 
@@ -15,31 +14,30 @@ type PeerEvent struct {
 	ID uint64
 }
 
-func senderLoop(dest *net.UDPAddr, conn *net.UDPConn, myId uint64) {
+// При ошибке отправки возвращаем её основному потоку, а не завершаем процесс.
+func senderLoop(dest *net.UDPAddr, conn *net.UDPConn, myID uint64, sendErr chan<- error) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
-	payload := make([]byte, 8)
-	binary.BigEndian.PutUint64(payload, myId)
-
+	payload := make([]byte, maxMsgSize)
+	binary.BigEndian.PutUint64(payload, myID)
 	for range ticker.C {
-		_, err := conn.WriteToUDP(payload, dest)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "WriteToUDP: %v\n", err)
-			os.Exit(1)
+		if _, err := conn.WriteToUDP(payload, dest); err != nil {
+			// Канал буферизован на один элемент: отправитель не блокируется.
+			sendErr <- fmt.Errorf("WriteToUDP: %w", err)
+			return
 		}
 	}
 }
 
 func receiverLoop(conn *net.UDPConn, myID uint64, out chan<- PeerEvent) {
 	buf := make([]byte, maxMsgSize)
-
 	for {
 		n, src, err := conn.ReadFromUDP(buf)
 		if err != nil {
-			continue
+			return // Закрытие сокета разблокирует ReadFromUDP.
 		}
-		if n != 8 {
+		if n != maxMsgSize {
 			continue
 		}
 		remoteID := binary.BigEndian.Uint64(buf)
