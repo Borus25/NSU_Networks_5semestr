@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"strings"
@@ -38,7 +39,7 @@ func handleConn(conn net.Conn) (retErr error) {
 					"file saved, but sending result failed: %w", err,
 				)
 			} else {
-				fmt.Printf("client %s: send error status: %v", client, err)
+				log.Printf("client %s: send error status: %v", client, err)
 			}
 		}
 	}()
@@ -83,7 +84,7 @@ func handleConn(conn net.Conn) (retErr error) {
 	}
 	defer func() {
 		if err := root.Close(); err != nil {
-			fmt.Printf("client %s: close uploads directory: %v", client, err)
+			log.Printf("client %s: close uploads directory: %v", client, err)
 		}
 	}()
 
@@ -98,13 +99,13 @@ func handleConn(conn net.Conn) (retErr error) {
 	defer func() {
 		if !closed {
 			if err := file.Close(); err != nil {
-				fmt.Printf("client %s: close incomplete file: %v", client, err)
+				log.Printf("client %s: close incomplete file: %v", client, err)
 			}
 		}
 
 		if !saved {
 			if err := root.Remove(savedName); err != nil {
-				fmt.Printf(
+				log.Printf(
 					"client %s: remove incomplete file %q: %v",
 					client, savedName, err,
 				)
@@ -112,7 +113,7 @@ func handleConn(conn net.Conn) (retErr error) {
 		}
 	}()
 
-	fmt.Printf(
+	log.Printf(
 		"client %s: receiving %q as %q, expected=%d bytes",
 		client, name, savedName, expectedSize,
 	)
@@ -190,7 +191,7 @@ func handleConn(conn net.Conn) (retErr error) {
 
 	saved = true
 
-	fmt.Printf(
+	log.Printf(
 		"client %s: saved %q, size=%d bytes",
 		client, savedName, written,
 	)

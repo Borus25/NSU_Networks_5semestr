@@ -2,15 +2,40 @@ package internal
 
 import (
 	"fmt"
+	"log"
+	"sync"
 	"sync/atomic"
 	"time"
 )
 
-// Возвращённую функцию нужно вызвать ровно один раз.
+const (
+	kilobyte = 1024
+	megabyte = 1024 * kilobyte
+	gigabyte = 1024 * megabyte
+)
+
+// formatSpeed автоматически выбирает подходящую единицу измерения.
+func formatSpeed(bytesPerSecond float64) string {
+	switch {
+	case bytesPerSecond >= gigabyte:
+		return fmt.Sprintf("%.4f ГБ/с", bytesPerSecond/gigabyte)
+	case bytesPerSecond >= megabyte:
+		return fmt.Sprintf("%.4f МБ/с", bytesPerSecond/megabyte)
+	case bytesPerSecond >= kilobyte:
+		return fmt.Sprintf("%.4f КБ/с", bytesPerSecond/kilobyte)
+	default:
+		return fmt.Sprintf("%.2f Б/с", bytesPerSecond)
+	}
+}
+
+// startTransferStats запускает вывод текущей и средней скорости каждые 3 секунды.
+// Возвращённую функцию необходимо вызвать ровно один раз.
 func startTransferStats(client string, received *atomic.Uint64) func() {
 	started := time.Now()
 	stop := make(chan time.Time)
 	finished := make(chan struct{})
+
+	var stopOnce sync.Once
 
 	go func() {
 		defer close(finished)
@@ -22,15 +47,19 @@ func startTransferStats(client string, received *atomic.Uint64) func() {
 		var lastBytes uint64
 
 		report := func(now time.Time, final bool) {
-			current := received.Load()
+			currentBytes := received.Load()
 
-			var instant, average float64
+			var currentSpeed float64
+			var averageSpeed float64
 
-			if seconds := now.Sub(lastTime).Seconds(); seconds > 0 {
-				instant = float64(current-lastBytes) / seconds
+			interval := now.Sub(lastTime).Seconds()
+			if interval > 0 {
+				currentSpeed = float64(currentBytes-lastBytes) / interval
 			}
-			if seconds := now.Sub(started).Seconds(); seconds > 0 {
-				average = float64(current) / seconds
+
+			totalTime := now.Sub(started).Seconds()
+			if totalTime > 0 {
+				averageSpeed = float64(currentBytes) / totalTime
 			}
 
 			label := "progress"
@@ -38,21 +67,23 @@ func startTransferStats(client string, received *atomic.Uint64) func() {
 				label = "final"
 			}
 
-			fmt.Printf(
-				"client %s: %s, received=%d bytes, "+
-					"instant=%.2f B/s, average=%.2f B/s",
-				client, label, current, instant, average,
+			log.Printf(
+				"client %s: %s, received=%d bytes, current=%s, average=%s",
+				client,
+				label,
+				currentBytes,
+				formatSpeed(currentSpeed),
+				formatSpeed(averageSpeed),
 			)
 
 			lastTime = now
-			lastBytes = current
+			lastBytes = currentBytes
 		}
 
 		for {
 			select {
-			case <-ticker.C:
-				report(time.Now(), false)
-
+			case now := <-ticker.C:
+				report(now, false)
 			case ended := <-stop:
 				report(ended, true)
 				return
@@ -61,7 +92,9 @@ func startTransferStats(client string, received *atomic.Uint64) func() {
 	}()
 
 	return func() {
-		stop <- time.Now()
-		<-finished
+		stopOnce.Do(func() {
+			stop <- time.Now()
+			<-finished
+		})
 	}
 }

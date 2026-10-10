@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"task2/server/internal"
@@ -9,7 +10,7 @@ import (
 
 func main() {
 	if len(os.Args) != 2 {
-		fmt.Println("Usage: ./server <server_port>")
+		log.Println("Usage: ./server <server_port>")
 		os.Exit(1)
 	}
 	port := os.Args[1]
@@ -23,14 +24,14 @@ func main() {
 	ls, err := net.Listen("tcp", ":"+port)
 	if err != nil {
 		err = fmt.Errorf("net.Listen error: %w", err)
-		fmt.Print(err.Error())
+		log.Print(err.Error())
 		os.Exit(1)
 	}
 	defer func(ls net.Listener) {
 		errLs := ls.Close()
 		if errLs != nil {
 			errLs = fmt.Errorf("net.Listener.Close error: %w", err)
-			fmt.Print(errLs.Error())
+			log.Print(errLs.Error())
 
 		}
 	}(ls)
@@ -39,7 +40,7 @@ func main() {
 		conn, errConn := ls.Accept()
 		if errConn != nil {
 			errConn = fmt.Errorf("accept connection: %w", errConn)
-			fmt.Print(errConn.Error())
+			log.Print(errConn.Error())
 
 			continue
 		}

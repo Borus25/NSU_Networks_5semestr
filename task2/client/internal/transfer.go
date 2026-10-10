@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -20,7 +21,7 @@ func SendFile(host string, port int, filePath string) error {
 	}
 	defer func() {
 		if err := file.Close(); err != nil {
-			fmt.Printf("close source file: %v", err)
+			_, _ = fmt.Fprintf(os.Stderr, "close source file: %v\n", err)
 		}
 	}()
 
@@ -28,7 +29,6 @@ func SendFile(host string, port int, filePath string) error {
 	if err != nil {
 		return fmt.Errorf("stat file: %w", err)
 	}
-
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("%q is not a regular file", filePath)
 	}
@@ -37,17 +37,15 @@ func SendFile(host string, port int, filePath string) error {
 	if fileSize < 0 || fileSize > maxFileBytes {
 		return fmt.Errorf(
 			"invalid file size: %d bytes, maximum=%d",
-			fileSize, maxFileBytes,
+			fileSize,
+			maxFileBytes,
 		)
 	}
 
-	// Серверу передаём только имя, а не путь на компьютере клиента.
 	name := filepath.Base(filePath)
-
 	if len(name) == 0 || len(name) > maxNameBytes {
 		return fmt.Errorf("invalid filename length: %d bytes", len(name))
 	}
-
 	if !utf8.ValidString(name) ||
 		name == "." ||
 		name == ".." ||
@@ -56,25 +54,19 @@ func SendFile(host string, port int, filePath string) error {
 	}
 
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
-
 	conn, err := net.DialTimeout("tcp", addr, connectTimeout)
 	if err != nil {
 		return fmt.Errorf("connect to %s: %w", addr, err)
 	}
 	defer func() {
 		if err := conn.Close(); err != nil {
-			fmt.Printf("close connection: %v", err)
+			_, _ = fmt.Fprintf(os.Stderr, "close connection: %v\n", err)
 		}
 	}()
 
-	fmt.Printf("connected to %s", conn.RemoteAddr())
+	log.Printf("connected to %s\n", conn.RemoteAddr())
 
-	// Заголовок:
-	// [2 байта: длина имени]
-	// [8 байт: размер файла]
-	// [N байт: имя UTF-8]
 	header := make([]byte, 10+len(name))
-
 	binary.BigEndian.PutUint16(header[0:2], uint16(len(name)))
 	binary.BigEndian.PutUint64(header[2:10], uint64(fileSize))
 	copy(header[10:], name)
@@ -88,25 +80,21 @@ func SendFile(host string, port int, filePath string) error {
 		return fmt.Errorf("send header: %w", err)
 	}
 
-	fmt.Printf("sending %q, size=%d bytes", name, fileSize)
+	log.Printf("sending %q, size=%d bytes\n", name, fileSize)
 
-	// Передаём ровно размер, который указали в заголовке.
 	sent, err := io.CopyN(writer, file, fileSize)
 	if err != nil {
 		return fmt.Errorf(
 			"send file: sent %d of %d bytes: %w",
-			sent, fileSize, err,
+			sent,
+			fileSize,
+			err,
 		)
 	}
 
-	fmt.Printf(
-		"sent %d bytes; waiting for server confirmation",
-		sent,
-	)
+	fmt.Printf("sent %d bytes; waiting for server confirmation\n", sent)
 
-	if err := conn.SetReadDeadline(
-		time.Now().Add(resultTimeout),
-	); err != nil {
+	if err := conn.SetReadDeadline(time.Now().Add(resultTimeout)); err != nil {
 		return fmt.Errorf("set result deadline: %w", err)
 	}
 
@@ -120,22 +108,15 @@ func SendFile(host string, port int, filePath string) error {
 
 	switch response[0] {
 	case statusOK:
-		fmt.Printf(
+		log.Printf(
 			"Передача успешна: сервер подтвердил сохранение %q (%d байт).\n",
-			name, sent,
+			name,
+			sent,
 		)
 		return nil
-
 	case statusError:
-		return fmt.Errorf(
-			"server reported a receive or save error for %q",
-			name,
-		)
-
+		return fmt.Errorf("server reported a receive or save error for %q", name)
 	default:
-		return fmt.Errorf(
-			"unknown server status: %d",
-			response[0],
-		)
+		return fmt.Errorf("unknown server status: %d", response[0])
 	}
 }
