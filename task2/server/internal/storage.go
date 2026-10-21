@@ -1,61 +1,65 @@
 package internal
 
 import (
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"syscall"
+	"unicode/utf8"
 )
 
-// createUpload сначала пытается сохранить исходное имя.
-// Случайное имя используется, если исходное уже занято
-// или превышает ограничение файловой системы.
-//
-// Предполагается, что имя уже проверено обработчиком.
+// createUpload preserves the original name whenever possible.
+// Existing files are never overwritten, including concurrent uploads.
 func createUpload(root *os.Root, name string) (*os.File, string, error) {
 	const flags = os.O_WRONLY | os.O_CREATE | os.O_EXCL
-
 	file, err := root.OpenFile(name, flags, 0600)
 	if err == nil {
 		return file, name, nil
 	}
-
-	// Остальные ошибки не скрываем: например, отсутствие
-	// прав доступа или свободного места на диске.
-	if !errors.Is(err, os.ErrExist) &&
-		!errors.Is(err, syscall.ENAMETOOLONG) {
-		return nil, "", fmt.Errorf(
-			"create file with original name: %w",
-			err,
-		)
+	if !errors.Is(err, os.ErrExist) && !errors.Is(err, syscall.ENAMETOOLONG) {
+		return nil, "", fmt.Errorf("create original filename: %w", err)
 	}
 
-	for range 10 {
-		var id [8]byte
-		if _, err := rand.Read(id[:]); err != nil {
-			return nil, "", fmt.Errorf(
-				"generate upload filename: %w",
-				err,
-			)
+	ext := filepath.Ext(name)
+	// Treat .gitignore and similar names as extensionless.
+	if ext == name {
+		ext = ""
+	}
+	stem := strings.TrimSuffix(name, ext)
+
+	for copyNumber := 1; copyNumber <= 10000; copyNumber++ {
+		suffix := " (copy)"
+		if copyNumber > 1 {
+			suffix = fmt.Sprintf(" (%d-copy)", copyNumber)
 		}
-
-		savedName := fmt.Sprintf("upload-%x.bin", id)
-
-		file, err = root.OpenFile(savedName, flags, 0600)
-		if err == nil {
-			return file, savedName, nil
-		}
-
-		if !errors.Is(err, os.ErrExist) {
-			return nil, "", fmt.Errorf(
-				"create file with generated name: %w",
-				err,
-			)
+		candidateStem, candidateExt := stem, ext
+		for {
+			savedName := candidateStem + suffix + candidateExt
+			file, err := root.OpenFile(savedName, flags, 0600)
+			if err == nil {
+				return file, savedName, nil
+			}
+			if errors.Is(err, os.ErrExist) {
+				break
+			}
+			if !errors.Is(err, syscall.ENAMETOOLONG) {
+				return nil, "", fmt.Errorf("create copy filename: %w", err)
+			}
+			// Shorten only when the filesystem actually rejects the name.
+			// Remove complete UTF-8 characters, preserving the extension
+			// as long as possible.
+			if candidateStem != "" {
+				_, size := utf8.DecodeLastRuneInString(candidateStem)
+				candidateStem = candidateStem[:len(candidateStem)-size]
+			} else if candidateExt != "" {
+				_, size := utf8.DecodeLastRuneInString(candidateExt)
+				candidateExt = candidateExt[:len(candidateExt)-size]
+			} else {
+				return nil, "", fmt.Errorf("copy filename is too long: %w", err)
+			}
 		}
 	}
-
-	return nil, "", fmt.Errorf(
-		"cannot choose an unused filename after 10 attempts",
-	)
+	return nil, "", fmt.Errorf("cannot choose an unused filename after 10000 copy attempts")
 }
