@@ -8,93 +8,69 @@ import (
 	"time"
 )
 
-const (
-	kilobyte = 1024
-	megabyte = 1024 * kilobyte
-	gigabyte = 1024 * megabyte
-)
-
-// formatSpeed автоматически выбирает подходящую единицу измерения.
 func formatSpeed(bytesPerSecond float64) string {
-	switch {
-	case bytesPerSecond >= gigabyte:
-		return fmt.Sprintf("%.4f ГБ/с", bytesPerSecond/gigabyte)
-	case bytesPerSecond >= megabyte:
-		return fmt.Sprintf("%.4f МБ/с", bytesPerSecond/megabyte)
-	case bytesPerSecond >= kilobyte:
-		return fmt.Sprintf("%.4f КБ/с", bytesPerSecond/kilobyte)
-	default:
-		return fmt.Sprintf("%.2f Б/с", bytesPerSecond)
+	units := [...]string{"Б/с", "КБ/с", "МБ/с", "ГБ/с"}
+	i := 0
+	for bytesPerSecond >= 1024 && i < len(units)-1 {
+		bytesPerSecond /= 1024
+		i++
 	}
+	return fmt.Sprintf("%.2f %s", bytesPerSecond, units[i])
 }
 
-// startTransferStats запускает вывод текущей и средней скорости каждые 3 секунды.
-// Возвращённую функцию необходимо вызвать ровно один раз.
 func startTransferStats(client string, received *atomic.Uint64) func() {
 	started := time.Now()
-	stop := make(chan time.Time)
+	baseline := received.Load()
+	stop := make(chan struct{})
 	finished := make(chan struct{})
-
-	var stopOnce sync.Once
+	var once sync.Once
 
 	go func() {
 		defer close(finished)
-
-		ticker := time.NewTicker(3 * time.Second)
+		ticker := time.NewTicker(IntervalReplyTimeout)
 		defer ticker.Stop()
-
 		lastTime := started
-		var lastBytes uint64
+		lastBytes := baseline
 
-		report := func(now time.Time, final bool) {
-			currentBytes := received.Load()
-
-			var currentSpeed float64
-			var averageSpeed float64
-
-			interval := now.Sub(lastTime).Seconds()
-			if interval > 0 {
-				currentSpeed = float64(currentBytes-lastBytes) / interval
+		report := func(final bool) {
+			current := received.Load()
+			now := time.Now()
+			var instant, average float64
+			if seconds := now.Sub(lastTime).Seconds(); seconds > 0 {
+				instant = float64(current-lastBytes) / seconds
 			}
-
-			totalTime := now.Sub(started).Seconds()
-			if totalTime > 0 {
-				averageSpeed = float64(currentBytes) / totalTime
+			if seconds := now.Sub(started).Seconds(); seconds > 0 {
+				average = float64(current-baseline) / seconds
 			}
-
 			label := "progress"
 			if final {
 				label = "final"
 			}
-
-			log.Printf(
-				"client %s: %s, received=%d bytes, current=%s, average=%s",
-				client,
-				label,
-				currentBytes,
-				formatSpeed(currentSpeed),
-				formatSpeed(averageSpeed),
-			)
-
+			log.Printf("client %s: %s, received=%s, instant=%s, average=%s",
+				client, label, formatSize(current-baseline), formatSpeed(instant), formatSpeed(average))
 			lastTime = now
-			lastBytes = currentBytes
+			lastBytes = current
 		}
 
 		for {
 			select {
-			case now := <-ticker.C:
-				report(now, false)
-			case ended := <-stop:
-				report(ended, true)
+			case <-stop:
+				report(true)
 				return
+			case <-ticker.C:
+				select {
+				case <-stop:
+					report(true)
+					return
+				default:
+					report(false)
+				}
 			}
 		}
 	}()
 
 	return func() {
-		stopOnce.Do(func() {
-			stop <- time.Now()
-			<-finished
-		})
+		once.Do(func() { close(stop) })
+		<-finished
 	}
 }

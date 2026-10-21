@@ -34,21 +34,19 @@ func SendFile(host string, port int, filePath string) error {
 	}
 
 	fileSize := info.Size()
-	if fileSize < 0 || fileSize > maxFileBytes {
-		return fmt.Errorf(
-			"invalid file size: %d bytes, maximum=%d",
-			fileSize,
-			maxFileBytes,
-		)
+	if fileSize < 0 {
+		return fmt.Errorf("invalid file size: %d bytes", fileSize)
+	}
+	if fileSize > maxFileBytes {
+		return fmt.Errorf("invalid file size: %s, maximum=%s",
+			formatSize(uint64(fileSize)), formatSize(uint64(maxFileBytes)))
 	}
 
 	name := filepath.Base(filePath)
 	if len(name) == 0 || len(name) > maxNameBytes {
 		return fmt.Errorf("invalid filename length: %d bytes", len(name))
 	}
-	if !utf8.ValidString(name) ||
-		name == "." ||
-		name == ".." ||
+	if !utf8.ValidString(name) || name == "." || name == ".." ||
 		strings.ContainsAny(name, "/\\\x00") {
 		return fmt.Errorf("invalid filename: %q", name)
 	}
@@ -64,35 +62,27 @@ func SendFile(host string, port int, filePath string) error {
 		}
 	}()
 
-	log.Printf("connected to %s\n", conn.RemoteAddr())
+	log.Printf("connected to %s", conn.RemoteAddr())
 
 	header := make([]byte, 10+len(name))
 	binary.BigEndian.PutUint16(header[0:2], uint16(len(name)))
 	binary.BigEndian.PutUint64(header[2:10], uint64(fileSize))
 	copy(header[10:], name)
 
-	writer := &deadlineWriter{
-		conn:    conn,
-		timeout: writeTimeout,
-	}
-
+	writer := &deadlineWriter{conn: conn, timeout: writeTimeout}
 	if err := writeAll(writer, header); err != nil {
 		return fmt.Errorf("send header: %w", err)
 	}
 
-	log.Printf("sending %q, size=%d bytes\n", name, fileSize)
+	log.Printf("sending %q, size=%s", name, formatSize(uint64(fileSize)))
 
 	sent, err := io.CopyN(writer, file, fileSize)
 	if err != nil {
-		return fmt.Errorf(
-			"send file: sent %d of %d bytes: %w",
-			sent,
-			fileSize,
-			err,
-		)
+		return fmt.Errorf("send file: sent %s of %s: %w",
+			formatSize(uint64(sent)), formatSize(uint64(fileSize)), err)
 	}
 
-	fmt.Printf("sent %d bytes; waiting for server confirmation\n", sent)
+	fmt.Printf("sent %s; waiting for server confirmation\n", formatSize(uint64(sent)))
 
 	if err := conn.SetReadDeadline(time.Now().Add(resultTimeout)); err != nil {
 		return fmt.Errorf("set result deadline: %w", err)
@@ -100,19 +90,13 @@ func SendFile(host string, port int, filePath string) error {
 
 	var response [1]byte
 	if _, err := io.ReadFull(conn, response[:]); err != nil {
-		return fmt.Errorf(
-			"no server confirmation; file may or may not have been saved: %w",
-			err,
-		)
+		return fmt.Errorf("no server confirmation; file may or may not have been saved: %w", err)
 	}
 
 	switch response[0] {
 	case statusOK:
-		log.Printf(
-			"Передача успешна: сервер подтвердил сохранение %q (%d байт).\n",
-			name,
-			sent,
-		)
+		log.Printf("Передача успешна: сервер подтвердил сохранение %q (%s).",
+			name, formatSize(uint64(sent)))
 		return nil
 	case statusError:
 		return fmt.Errorf("server reported a receive or save error for %q", name)

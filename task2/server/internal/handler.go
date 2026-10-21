@@ -23,7 +23,6 @@ func handleConn(conn net.Conn) (retErr error) {
 		if retErr != nil {
 			status = statusError
 		}
-
 		err := conn.SetWriteDeadline(time.Now().Add(replyTimeout))
 		if err == nil {
 			var n int
@@ -32,47 +31,36 @@ func handleConn(conn net.Conn) (retErr error) {
 				err = io.ErrShortWrite
 			}
 		}
-
 		if err != nil {
 			if retErr == nil {
-				retErr = fmt.Errorf(
-					"file saved, but sending result failed: %w", err,
-				)
+				retErr = fmt.Errorf("file saved, but sending result failed: %w", err)
 			} else {
 				log.Printf("client %s: send error status: %v", client, err)
 			}
 		}
 	}()
 
-	if err := conn.SetReadDeadline(
-		time.Now().Add(headerTimeout),
-	); err != nil {
+	if err := conn.SetReadDeadline(time.Now().Add(headerTimeout)); err != nil {
 		return fmt.Errorf("set header deadline: %w", err)
 	}
-
 	var nameLen uint16
 	var expectedSize uint64
-
 	if err := binary.Read(conn, binary.BigEndian, &nameLen); err != nil {
 		return fmt.Errorf("read filename length: %w", err)
 	}
-
 	if err := binary.Read(conn, binary.BigEndian, &expectedSize); err != nil {
 		return fmt.Errorf("read file size: %w", err)
 	}
-
 	if nameLen == 0 || nameLen > maxNameBytes {
 		return fmt.Errorf("invalid filename length: %d", nameLen)
 	}
 	if expectedSize > maxFileBytes {
-		return fmt.Errorf("file too large: %d bytes", expectedSize)
+		return fmt.Errorf("file too large: %s", formatSize(expectedSize))
 	}
-
 	nameBytes := make([]byte, int(nameLen))
 	if _, err := io.ReadFull(conn, nameBytes); err != nil {
 		return fmt.Errorf("read filename: %w", err)
 	}
-
 	name := string(nameBytes)
 	if !utf8.ValidString(name) || name == "." || name == ".." || strings.ContainsAny(name, "/\\\x00") {
 		return fmt.Errorf("invalid filename: %q", name)
@@ -92,31 +80,23 @@ func handleConn(conn net.Conn) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("create upload file: %w", err)
 	}
-
 	closed := false
 	saved := false
-
 	defer func() {
 		if !closed {
 			if err := file.Close(); err != nil {
 				log.Printf("client %s: close incomplete file: %v", client, err)
 			}
 		}
-
 		if !saved {
 			if err := root.Remove(savedName); err != nil {
-				log.Printf(
-					"client %s: remove incomplete file %q: %v",
-					client, savedName, err,
-				)
+				log.Printf("client %s: remove incomplete file %q: %v", client, savedName, err)
 			}
 		}
 	}()
 
-	log.Printf(
-		"client %s: receiving %q as %q, expected=%d bytes",
-		client, name, savedName, expectedSize,
-	)
+	log.Printf("client %s: receiving %q as %q, expected=%s",
+		client, name, savedName, formatSize(expectedSize))
 
 	var received atomic.Uint64
 	stopStats := startTransferStats(client, &received)
@@ -124,27 +104,20 @@ func handleConn(conn net.Conn) (retErr error) {
 
 	buf := make([]byte, 64*1024)
 	var written uint64
-
 	for written < expectedSize {
 		remaining := expectedSize - written
 		chunk := len(buf)
 		if remaining < uint64(chunk) {
 			chunk = int(remaining)
 		}
-
-		if err := conn.SetReadDeadline(
-			time.Now().Add(readTimeout),
-		); err != nil {
+		if err := conn.SetReadDeadline(time.Now().Add(readTimeout)); err != nil {
 			return fmt.Errorf("set data deadline: %w", err)
 		}
-
 		n, readErr := conn.Read(buf[:chunk])
 		received.Add(uint64(n))
-
 		if n > 0 {
 			nw, writeErr := file.Write(buf[:n])
 			written += uint64(nw)
-
 			if writeErr != nil {
 				return fmt.Errorf("write file: %w", writeErr)
 			}
@@ -152,19 +125,14 @@ func handleConn(conn net.Conn) (retErr error) {
 				return fmt.Errorf("write file: %w", io.ErrShortWrite)
 			}
 		}
-
 		if readErr != nil {
 			// EOF после получения последнего байта допустим.
 			if errors.Is(readErr, io.EOF) && written == expectedSize {
 				break
 			}
-
-			return fmt.Errorf(
-				"receive file: got %d of %d bytes: %w",
-				received.Load(), expectedSize, readErr,
-			)
+			return fmt.Errorf("receive file: got %s of %s: %w",
+				formatSize(received.Load()), formatSize(expectedSize), readErr)
 		}
-
 		if n == 0 {
 			return fmt.Errorf("receive file: %w", io.ErrNoProgress)
 		}
@@ -174,12 +142,13 @@ func handleConn(conn net.Conn) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("stat received file: %w", err)
 	}
-
 	if written != expectedSize || uint64(info.Size()) != expectedSize {
-		return fmt.Errorf("size mismatch: expected=%d, written=%d, actual=%d", expectedSize, written, info.Size())
+		return fmt.Errorf("size mismatch: expected=%s (%d bytes), written=%s (%d bytes), actual=%s (%d bytes)",
+			formatSize(expectedSize), expectedSize,
+			formatSize(written), written,
+			formatSize(uint64(info.Size())), info.Size())
 	}
-
-	if err := file.Sync(); err != nil {
+	if err = file.Sync(); err != nil {
 		return fmt.Errorf("sync file: %w", err)
 	}
 
@@ -190,11 +159,7 @@ func handleConn(conn net.Conn) (retErr error) {
 	}
 
 	saved = true
-
-	log.Printf(
-		"client %s: saved %q, size=%d bytes",
-		client, savedName, written,
-	)
+	log.Printf("client %s: saved %q, size=%s", client, savedName, formatSize(written))
 
 	return nil
 }
