@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -51,6 +52,22 @@ func SendFile(host string, port int, filePath string) error {
 		return fmt.Errorf("invalid filename: %q", name)
 	}
 
+	initialChecksum, err := sourceChecksum(file, fileSize)
+	if err != nil {
+		return err
+	}
+
+	// Проверяем также изменения после первоначального file.Stat().
+	initialInfo, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("stat source before transfer: %w", err)
+	}
+
+	if initialInfo.Size() != info.Size() ||
+		!initialInfo.ModTime().Equal(info.ModTime()) {
+		return fmt.Errorf("source file changed before transfer")
+	}
+
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	conn, err := net.DialTimeout("tcp", addr, connectTimeout)
 	if err != nil {
@@ -76,7 +93,24 @@ func SendFile(host string, port int, filePath string) error {
 
 	log.Printf("sending %q, size=%s", name, formatSize(uint64(fileSize)))
 
-	sent, err := io.CopyN(writer, file, fileSize)
+	sentHash := sha256.New()
+
+	sent, err := io.CopyN(
+		io.MultiWriter(writer, sentHash),
+		file,
+		fileSize,
+	)
+	var sentChecksum [sha256.Size]byte
+	copy(sentChecksum[:], sentHash.Sum(nil))
+
+	if sentChecksum != initialChecksum {
+		return fmt.Errorf(
+			"source file changed during transfer: " +
+				"sent content differs from initial content; " +
+				"server may already have saved the file",
+		)
+	}
+
 	if err != nil {
 		return fmt.Errorf("send file: sent %s of %s: %w",
 			formatSize(uint64(sent)), formatSize(uint64(fileSize)), err)
@@ -95,8 +129,35 @@ func SendFile(host string, port int, filePath string) error {
 
 	switch response[0] {
 	case statusOK:
-		log.Printf("Передача успешна: сервер подтвердил сохранение %q (%s).",
-			name, formatSize(uint64(sent)))
+		finalChecksum, err := sourceChecksum(file, fileSize)
+		if err != nil {
+			return fmt.Errorf(
+				"server confirmed saving, but source verification failed: %w",
+				err,
+			)
+		}
+
+		finalInfo, err := file.Stat()
+		if err != nil {
+			return fmt.Errorf("stat source after transfer: %w", err)
+		}
+
+		if finalChecksum != initialChecksum ||
+			finalInfo.Size() != initialInfo.Size() ||
+			!finalInfo.ModTime().Equal(initialInfo.ModTime()) {
+			return fmt.Errorf(
+				"source file changed during transfer; " +
+					"server confirmed saving, but transfer is not " +
+					"considered successful by the client",
+			)
+		}
+
+		log.Printf(
+			"Передача успешна: сервер подтвердил сохранение %q (%s). "+
+				"Содержимое исходного файла проверено по SHA-256.",
+			name,
+			formatSize(uint64(sent)),
+		)
 		return nil
 	case statusError:
 		return fmt.Errorf("server reported a receive or save error for %q", name)

@@ -1,11 +1,14 @@
 package internal
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net"
 	"os"
+	"runtime"
 	"strconv"
+	"time"
 )
 
 const defaultMaxClients = 10
@@ -86,29 +89,68 @@ func (s *Server) ListenAndServe() error {
 		s.maxClients,
 	)
 
+	var retryDelay time.Duration
+
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
+			// Закрытый listener не нужно пытаться использовать снова.
+			if errors.Is(err, net.ErrClosed) {
+				return nil
+			}
+
+			var netErr net.Error
+			if errors.As(err, &netErr) &&
+				(netErr.Timeout() || netErr.Temporary()) {
+
+				if retryDelay == 0 {
+					retryDelay = 5 * time.Millisecond
+				} else {
+					retryDelay *= 2
+				}
+
+				if retryDelay > time.Second {
+					retryDelay = time.Second
+				}
+
+				log.Printf(
+					"temporary accept error: %v; retrying in %s",
+					err,
+					retryDelay,
+				)
+
+				time.Sleep(retryDelay)
+				continue
+			}
+
+			// Невосстановимую ошибку возвращаем вызывающему коду.
 			return fmt.Errorf("accept connection: %w", err)
 		}
 
-		select {
-		case slots <- struct{}{}:
-			go s.serveClient(conn, slots)
+		// После успешного подключения сбрасываем задержку.
+		retryDelay = 0
 
-		default:
-			s.rejectClient(conn)
-		}
+		// Ждём свободного места, не отклоняя принятое соединение.
+		slots <- struct{}{}
+
+		go s.serveClient(conn, slots)
 	}
 }
 
 // serveClient освобождает место после завершения обработчика.
 // Само соединение закрывает существующая функция ServeConn.
+// serveClient обрабатывает клиента на выделенном потоке ОС.
 func (s *Server) serveClient(conn net.Conn, slots chan struct{}) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	// Освобождаем место после завершения обработки.
 	defer func() {
 		<-slots
 	}()
 
+	// Существующий обработчик принимает файл,
+	// отправляет результат и закрывает соединение.
 	ServeConn(conn)
 }
 

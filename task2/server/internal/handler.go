@@ -17,12 +17,20 @@ import (
 func handleConn(conn net.Conn) (retErr error) {
 	client := conn.RemoteAddr().String()
 
-	// Ответ отправляется после завершения остальных deferred-функций.
+	// Измерение начинается сразу при входе в обработчик:
+	// до получения заголовка и создания файла.
+	var received atomic.Uint64
+	stopStats := startTransferStats(client, &received)
+	defer stopStats()
+
+	// Ответ отправляется после завершения остальных
+	// deferred-функций, зарегистрированных ниже.
 	defer func() {
 		status := statusOK
 		if retErr != nil {
 			status = statusError
 		}
+
 		err := conn.SetWriteDeadline(time.Now().Add(replyTimeout))
 		if err == nil {
 			var n int
@@ -31,11 +39,19 @@ func handleConn(conn net.Conn) (retErr error) {
 				err = io.ErrShortWrite
 			}
 		}
+
 		if err != nil {
 			if retErr == nil {
-				retErr = fmt.Errorf("file saved, but sending result failed: %w", err)
+				retErr = fmt.Errorf(
+					"file saved, but sending result failed: %w",
+					err,
+				)
 			} else {
-				log.Printf("client %s: send error status: %v", client, err)
+				log.Printf(
+					"client %s: send error status: %v",
+					client,
+					err,
+				)
 			}
 		}
 	}()
@@ -71,7 +87,7 @@ func handleConn(conn net.Conn) (retErr error) {
 		return fmt.Errorf("open uploads directory: %w", err)
 	}
 	defer func() {
-		if err := root.Close(); err != nil {
+		if err = root.Close(); err != nil {
 			log.Printf("client %s: close uploads directory: %v", client, err)
 		}
 	}()
@@ -84,12 +100,12 @@ func handleConn(conn net.Conn) (retErr error) {
 	saved := false
 	defer func() {
 		if !closed {
-			if err := file.Close(); err != nil {
+			if err = file.Close(); err != nil {
 				log.Printf("client %s: close incomplete file: %v", client, err)
 			}
 		}
 		if !saved {
-			if err := root.Remove(savedName); err != nil {
+			if err = root.Remove(savedName); err != nil {
 				log.Printf("client %s: remove incomplete file %q: %v", client, savedName, err)
 			}
 		}
@@ -97,10 +113,6 @@ func handleConn(conn net.Conn) (retErr error) {
 
 	log.Printf("client %s: receiving %q as %q, expected=%s",
 		client, name, savedName, formatSize(expectedSize))
-
-	var received atomic.Uint64
-	stopStats := startTransferStats(client, &received)
-	defer stopStats()
 
 	buf := make([]byte, 64*1024)
 	var written uint64
@@ -110,7 +122,7 @@ func handleConn(conn net.Conn) (retErr error) {
 		if remaining < uint64(chunk) {
 			chunk = int(remaining)
 		}
-		if err := conn.SetReadDeadline(time.Now().Add(readTimeout)); err != nil {
+		if err = conn.SetReadDeadline(time.Now().Add(readTimeout)); err != nil {
 			return fmt.Errorf("set data deadline: %w", err)
 		}
 		n, readErr := conn.Read(buf[:chunk])
