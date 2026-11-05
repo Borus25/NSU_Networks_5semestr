@@ -4,10 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
 	"net/url"
 	"strconv"
 	"strings"
 	"task3/internal/model"
+	"task3/internal/rxutil"
+
+	"github.com/reactivex/rxgo/v2"
 )
 
 type placeDescriptionResponse struct {
@@ -33,80 +37,59 @@ type wikipediaPageExtract struct {
 	} `json:"thumbnail"`
 }
 
-func (c *WikipediaClient) LoadPlaceDescription(ctx context.Context, place model.PlaceRef) (model.PlaceDescription, error) {
+func (c *WikipediaClient) LoadPlaceDescription(ctx context.Context, place model.PlaceRef) rxgo.Observable {
 	if place.PageID <= 0 {
-		return model.PlaceDescription{}, fmt.Errorf(
-			"invalid Wikipedia page ID: %d",
-			place.PageID,
-		)
+		return rxgo.Thrown(fmt.Errorf("invalid Wikipedia page ID: %d", place.PageID))
 	}
 
-	pageID := strconv.FormatInt(place.PageID, 10)
-
-	params := url.Values{}
-	params.Set("action", "query")
-	params.Set("pageids", pageID)
-	params.Set("exintro", "1")
-	params.Set("explaintext", "1")
-	params.Set("format", "json")
-	params.Set("prop", "extracts|pageimages")
-	params.Set("piprop", "thumbnail")
-	params.Set("pithumbsize", "480")
-
-	var response placeDescriptionResponse
-	if err := c.getJSON(ctx, params, &response); err != nil {
-		return model.PlaceDescription{}, fmt.Errorf("load Wikipedia page %d: %w", place.PageID, err)
+	params := url.Values{
+		"action": {"query"}, "pageids": {strconv.FormatInt(place.PageID, 10)},
+		"exintro": {"1"}, "explaintext": {"1"}, "format": {"json"},
+		"prop": {"extracts|pageimages"}, "piprop": {"thumbnail"}, "pithumbsize": {"480"},
 	}
 
-	if response.Query == nil {
-		return model.PlaceDescription{}, fmt.Errorf("wikipedia description response has no query object")
-	}
-
-	for _, page := range response.Query.Pages {
-		if page.PageID != place.PageID {
-			continue
-		}
-
-		if len(page.Missing) != 0 || len(page.Invalid) != 0 {
-			return model.PlaceDescription{}, fmt.Errorf("wikipedia page %d is missing or invalid", place.PageID)
-		}
-
-		if page.Title != "" {
-			place.Title = page.Title
-		}
-
-		result := model.PlaceDescription{
-			Place:   place,
-			Summary: strings.TrimSpace(page.Extract),
-		}
-
-		if page.Thumbnail != nil && page.Thumbnail.Source != "" {
-			result.ImageURL = page.Thumbnail.Source
-
-			thumbnail, err := c.loadThumbnail(
-				ctx,
-				result.ImageURL,
-			)
-
-			if err != nil {
-				// Отмена операции не должна превращаться
-				// в успешный результат с отсутствующей картинкой.
-				if ctx.Err() != nil {
-					return model.PlaceDescription{}, ctx.Err()
+	return rxutil.Defer(ctx, func(scope context.Context) rxgo.Observable {
+		return decodeJSON[placeDescriptionResponse](scope, c.getJSON(scope, params)).FlatMap(
+			func(item rxgo.Item) rxgo.Observable {
+				if item.Error() {
+					return rxgo.Thrown(item.E)
 				}
 
-				result.ImageError = err.Error()
-			} else {
-				result.Image = thumbnail
-			}
-		}
+				response := item.V.(placeDescriptionResponse)
+				if response.Error != nil {
+					return rxgo.Thrown(fmt.Errorf("wikipedia API error %s: %s", response.Error.Code, response.Error.Info))
+				}
+				if response.Query == nil {
+					return rxgo.Thrown(fmt.Errorf("wikipedia description response has no query object"))
+				}
 
-		if err := ctx.Err(); err != nil {
-			return model.PlaceDescription{}, err
-		}
+				page, ok := response.Query.Pages[strconv.FormatInt(place.PageID, 10)]
+				if !ok || page.PageID != place.PageID || len(page.Missing) != 0 || len(page.Invalid) != 0 {
+					return rxgo.Thrown(fmt.Errorf("wikipedia page %d is missing, invalid or was not returned", place.PageID))
+				}
 
-		return result, nil
-	}
+				currentPlace := place
+				if page.Title != "" {
+					currentPlace.Title = page.Title
+				}
 
-	return model.PlaceDescription{}, fmt.Errorf("wikipedia page %d was not returned", place.PageID)
+				result := model.PlaceDescription{Place: currentPlace, Summary: strings.TrimSpace(page.Extract)}
+				if page.Thumbnail == nil || page.Thumbnail.Source == "" {
+					return rxutil.Value(scope, result)
+				}
+
+				result.ImageURL = page.Thumbnail.Source
+				return c.loadThumbnail(scope, result.ImageURL).Map(func(_ context.Context, value any) (any, error) {
+					result.Image = value.(image.Image)
+					return result, nil
+				}, rxgo.WithContext(scope)).OnErrorResumeNext(func(err error) rxgo.Observable {
+					if scope.Err() != nil {
+						return rxgo.Thrown(scope.Err())
+					}
+
+					result.ImageError = err.Error()
+					return rxutil.Value(scope, result)
+				}, rxgo.WithContext(scope))
+			}, rxgo.WithContext(scope))
+	})
 }

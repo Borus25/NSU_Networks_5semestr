@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"task3/internal/api"
+	"task3/internal/asynchttp"
 	"task3/internal/config"
 	"task3/internal/service"
 	"task3/internal/ui"
@@ -39,18 +40,20 @@ func run() error {
 	}
 	defer httpClient.CloseIdleConnections()
 
+	asyncClient := asynchttp.New(httpClient)
+
 	graphHopper := api.NewGraphHopperClient(
-		httpClient,
+		asyncClient,
 		cfg.GraphHopper,
 	)
 
 	openWeather := api.NewOpenWeatherClient(
-		httpClient,
+		asyncClient,
 		cfg.OpenWeather,
 	)
 
 	wikipedia := api.NewWikipediaClient(
-		httpClient,
+		asyncClient,
 		cfg.Wikipedia,
 	)
 

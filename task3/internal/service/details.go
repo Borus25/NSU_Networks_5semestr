@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"task3/internal/model"
+	"task3/internal/rxutil"
 
 	"github.com/reactivex/rxgo/v2"
 )
@@ -15,147 +16,129 @@ type DetailsOptions struct {
 	Workers int
 }
 
+// Each lane subscribes to at most one description at a time.
+// A slot stays occupied through BOTH the article request and thumbnail request.
 func (s *Service) describePlaces(ctx context.Context, places []model.PlaceRef, workers int) rxgo.Observable {
-	source := rxgo.Defer([]rxgo.Producer{
-		func(ctx context.Context, out chan<- rxgo.Item) {
-			for _, place := range places {
-				if !rxgo.Of(place).SendContext(ctx, out) {
-					return
+	return rxutil.Defer(ctx, func(scope context.Context) rxgo.Observable {
+		if len(places) == 0 {
+			return rxutil.Value(scope, []model.PlaceDescription{})
+		}
+		if workers > len(places) {
+			workers = len(places)
+		}
+		lanes := make([]rxgo.Observable, 0, workers)
+		for lane := 0; lane < workers; lane++ {
+			refs := make([]model.PlaceRef, 0)
+			for index := lane; index < len(places); index += workers {
+				refs = append(refs, places[index])
+			}
+			source := rxgo.Defer([]rxgo.Producer{func(ctx context.Context, out chan<- rxgo.Item) {
+				for _, ref := range refs {
+					if !rxgo.Of(ref).SendContext(ctx, out) {
+						return
+					}
 				}
-			}
-		},
-	}, rxgo.WithContext(ctx))
-
-	descriptions := source.Map(
-		func(ctx context.Context, value any) (any, error) {
-			place, ok := value.(model.PlaceRef)
-			if !ok {
-				return nil, fmt.Errorf("unexpected place type: %T", value)
-			}
-
-			description, err := s.places.LoadPlaceDescription(ctx, place)
-			if err != nil {
-				return nil, fmt.Errorf("load description for page %d: %w", place.PageID, err)
-			}
-
-			return description, nil
-		}, rxgo.WithPool(workers), rxgo.WithContext(ctx))
-
-	return descriptions.
-		BufferWithCount(len(places), rxgo.WithContext(ctx)).Map(
-		func(_ context.Context, value any) (any, error) {
-			buffer, ok := value.([]any)
-			if !ok {
-				return nil, fmt.Errorf("unexpected descriptions buffer type: %T", value)
-			}
-
-			if len(buffer) != len(places) {
-				return nil, fmt.Errorf("incomplete descriptions: got %d, expected %d", len(buffer), len(places))
-			}
-
-			result := make([]model.PlaceDescription, 0, len(buffer))
-
-			for _, value = range buffer {
-				description, ok := value.(model.PlaceDescription)
+			}}, rxgo.WithContext(scope))
+			// RxGo v2.5 FlatMap consumes one inner Observable to completion.
+			lanes = append(lanes, source.FlatMap(func(item rxgo.Item) rxgo.Observable {
+				if item.Error() {
+					return rxgo.Thrown(item.E)
+				}
+				place, ok := item.V.(model.PlaceRef)
 				if !ok {
-					return nil, fmt.Errorf("unexpected description type: %T", value)
+					return rxgo.Thrown(fmt.Errorf("unexpected place type: %T", item.V))
 				}
-
-				result = append(result, description)
-			}
-
-			sort.SliceStable(result, func(i, j int) bool {
-				if result[i].Place.DistanceM == result[j].Place.DistanceM {
-					return result[i].Place.PageID < result[j].Place.PageID
+				return s.LoadPlaceDescription(scope, place)
+			}, rxgo.WithContext(scope)))
+		}
+		// RxGo v2.5 Merge sends without a cancellation select. Bound its output
+		// by the maximum number of events so early cancellation cannot strand senders.
+		return rxgo.Merge(lanes, rxgo.WithContext(scope), rxgo.WithBufferedChannel(len(places)+workers)).
+			BufferWithCount(len(places), rxgo.WithContext(scope)).Map(
+			func(_ context.Context, value any) (any, error) {
+				buffer, ok := value.([]any)
+				if !ok || len(buffer) != len(places) {
+					return nil, fmt.Errorf("incomplete descriptions")
 				}
-
-				return result[i].Place.DistanceM < result[j].Place.DistanceM
-			})
-
-			return result, nil
-		}, rxgo.WithContext(ctx))
+				result := make([]model.PlaceDescription, 0, len(buffer))
+				for _, value := range buffer {
+					description, ok := value.(model.PlaceDescription)
+					if !ok {
+						return nil, fmt.Errorf("unexpected description type: %T", value)
+					}
+					result = append(result, description)
+				}
+				sort.SliceStable(result, func(i, j int) bool {
+					if result[i].Place.DistanceM == result[j].Place.DistanceM {
+						return result[i].Place.PageID < result[j].Place.PageID
+					}
+					return result[i].Place.DistanceM < result[j].Place.DistanceM
+				})
+				return result, nil
+			}, rxgo.WithContext(scope))
+	})
 }
 
-func (s *Service) loadNearbyDescriptions(
-	ctx context.Context,
-	coordinates model.Coordinates,
-	options DetailsOptions,
-) rxgo.Observable {
-	return s.FindNearbyPlaces(
-		ctx,
-		coordinates,
-		options.RadiusM,
-		options.Limit,
-	).FlatMap(
-		func(item rxgo.Item) rxgo.Observable {
-			if item.Error() {
-				return rxgo.Thrown(item.E)
-			}
-
-			places, ok := item.V.([]model.PlaceRef)
-			if !ok {
-				return rxgo.Thrown(fmt.Errorf(
-					"unexpected nearby places type: %T",
-					item.V,
-				))
-			}
-
-			// Zip должен получить один элемент даже при отсутствии мест.
-			if len(places) == 0 {
-				return rxgo.Defer(
-					[]rxgo.Producer{
-						func(ctx context.Context, out chan<- rxgo.Item) {
-							rxgo.Of(
-								[]model.PlaceDescription{},
-							).SendContext(ctx, out)
-						},
-					},
-					rxgo.WithContext(ctx),
-				)
-			}
-
-			return s.describePlaces(ctx, places, options.Workers)
-		},
-		rxgo.WithContext(ctx),
-	)
+func (s *Service) loadNearbyDescriptions(ctx context.Context, coordinates model.Coordinates, options DetailsOptions) rxgo.Observable {
+	return rxutil.Defer(ctx, func(scope context.Context) rxgo.Observable {
+		return s.FindNearbyPlaces(scope, coordinates, options.RadiusM, options.Limit).FlatMap(
+			func(item rxgo.Item) rxgo.Observable {
+				if item.Error() {
+					return rxgo.Thrown(item.E)
+				}
+				places, ok := item.V.([]model.PlaceRef)
+				if !ok {
+					return rxgo.Thrown(fmt.Errorf("unexpected nearby places type: %T", item.V))
+				}
+				return s.describePlaces(scope, places, options.Workers)
+			}, rxgo.WithContext(scope))
+	})
 }
 
 func (s *Service) LoadLocationInfo(ctx context.Context, location model.Location, options DetailsOptions) rxgo.Observable {
 	if options.Workers <= 0 {
 		return rxgo.Thrown(fmt.Errorf("description workers must be > 0"))
 	}
-
 	if options.RadiusM < 10 || options.RadiusM > 10000 {
-		return rxgo.Thrown(fmt.Errorf(
-			"search radius must be between 10 and 10000 meters",
-		))
+		return rxgo.Thrown(fmt.Errorf("search radius must be between 10 and 10000 meters"))
 	}
-
 	if options.Limit < 1 || options.Limit > 500 {
-		return rxgo.Thrown(fmt.Errorf(
-			"search limit must be between 1 and 500",
-		))
+		return rxgo.Thrown(fmt.Errorf("search limit must be between 1 and 500"))
 	}
-
-	weather := s.LoadWeather(ctx, location.Coordinates)
-	places := s.loadNearbyDescriptions(ctx, location.Coordinates, options)
-
-	return weather.ZipFromIterable(places,
-		func(_ context.Context, weatherValue, placesValue any) (any, error) {
-			weatherLocal, ok := weatherValue.(model.Weather)
-			if !ok {
-				return nil, fmt.Errorf("unexpected weather type: %T", weatherValue)
+	return rxutil.Defer(ctx, func(scope context.Context) rxgo.Observable {
+		weather := s.LoadWeather(scope, location.Coordinates)
+		places := s.loadNearbyDescriptions(scope, location.Coordinates, options)
+		// Merge reports failure from EITHER branch immediately. Defer cancels the sibling.
+		return rxgo.Merge([]rxgo.Observable{weather, places}, rxgo.WithContext(scope), rxgo.WithBufferedChannel(4)).
+			BufferWithCount(2, rxgo.WithContext(scope)).Map(func(_ context.Context, value any) (any, error) {
+			buffer, ok := value.([]any)
+			if !ok || len(buffer) != 2 {
+				return nil, fmt.Errorf("incomplete location info")
 			}
-
-			descriptions, ok := placesValue.([]model.PlaceDescription)
-			if !ok {
-				return nil, fmt.Errorf("unexpected descriptions type: %T", placesValue)
+			result := model.LocationInfo{Location: location}
+			weatherSeen, placesSeen := false, false
+			for _, part := range buffer {
+				switch typed := part.(type) {
+				case model.Weather:
+					if weatherSeen {
+						return nil, fmt.Errorf("duplicate weather result")
+					}
+					result.Weather = typed
+					weatherSeen = true
+				case []model.PlaceDescription:
+					if placesSeen {
+						return nil, fmt.Errorf("duplicate places result")
+					}
+					result.Places = typed
+					placesSeen = true
+				default:
+					return nil, fmt.Errorf("unexpected location info part: %T", part)
+				}
 			}
-
-			return model.LocationInfo{
-				Location: location,
-				Weather:  weatherLocal,
-				Places:   descriptions,
-			}, nil
-		}, rxgo.WithContext(ctx))
+			if !weatherSeen || !placesSeen {
+				return nil, fmt.Errorf("incomplete location info")
+			}
+			return result, nil
+		}, rxgo.WithContext(scope))
+	})
 }

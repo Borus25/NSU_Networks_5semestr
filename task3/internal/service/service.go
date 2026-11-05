@@ -3,21 +3,20 @@ package service
 import (
 	"context"
 	"task3/internal/model"
+
+	"github.com/reactivex/rxgo/v2"
 )
 
 type LocationSearcher interface {
-	SearchLocations(ctx context.Context, query string) ([]model.Location, error)
+	SearchLocations(context.Context, string) rxgo.Observable
 }
-
 type WeatherLoader interface {
-	LoadWeather(ctx context.Context, coordinates model.Coordinates) (model.Weather, error)
+	LoadWeather(context.Context, model.Coordinates) rxgo.Observable
 }
-
 type PlacesSearcher interface {
-	FindNearbyPlaces(ctx context.Context, coordinates model.Coordinates, radiusM int, limit int) ([]model.PlaceRef, error)
-	LoadPlaceDescription(ctx context.Context, place model.PlaceRef) (model.PlaceDescription, error)
+	FindNearbyPlaces(context.Context, model.Coordinates, int, int) rxgo.Observable
+	LoadPlaceDescription(context.Context, model.PlaceRef) rxgo.Observable
 }
-
 type Service struct {
 	locations LocationSearcher
 	weather   WeatherLoader
@@ -25,9 +24,5 @@ type Service struct {
 }
 
 func New(locations LocationSearcher, weather WeatherLoader, places PlacesSearcher) *Service {
-	return &Service{
-		locations: locations,
-		weather:   weather,
-		places:    places,
-	}
+	return &Service{locations: locations, weather: weather, places: places}
 }

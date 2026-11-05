@@ -1,16 +1,16 @@
 package api
 
 import (
-	"net/http"
+	"task3/internal/asynchttp"
 	"task3/internal/config"
 )
 
 type OpenWeatherClient struct {
-	httpClient *http.Client
+	httpClient *asynchttp.Client
 	cfg        config.OpenWeatherConfig
 }
 
-func NewOpenWeatherClient(httpClient *http.Client, cfg config.OpenWeatherConfig) *OpenWeatherClient {
+func NewOpenWeatherClient(httpClient *asynchttp.Client, cfg config.OpenWeatherConfig) *OpenWeatherClient {
 	return &OpenWeatherClient{
 		httpClient: httpClient,
 		cfg:        cfg,
