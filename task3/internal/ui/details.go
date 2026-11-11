@@ -123,27 +123,62 @@ func (a *App) awaitLocationInfo(
 // Вызывается только в UI-контексте.
 // Вызывается только в UI-контексте.
 func (a *App) showLocationInfo(info model.LocationInfo) {
-	a.status.SetText(
-		fmt.Sprintf(
-			"Загружено: %s.",
-			locationTitle(info.Location),
-		),
-	)
+	hasErrors := info.WeatherError != "" ||
+		info.PlacesError != ""
 
-	a.weather.SetText(
-		fmt.Sprintf(
-			"%s\n"+
-				"Температура: %.1f °C\n"+
-				"Ощущается как: %.1f °C\n"+
-				"Влажность: %d %%\n"+
-				"Ветер: %.1f м/с",
-			info.Weather.Description,
-			info.Weather.TemperatureC,
-			info.Weather.FeelsLikeC,
-			info.Weather.HumidityPct,
-			info.Weather.WindSpeedMPS,
-		),
-	)
+	for _, place := range info.Places {
+		if place.DescriptionError != "" ||
+			place.ImageError != "" {
+			hasErrors = true
+			break
+		}
+	}
+
+	if hasErrors {
+		a.status.SetText(
+			fmt.Sprintf(
+				"Загружено с частичными ошибками: %s.",
+				locationTitle(info.Location),
+			),
+		)
+	} else {
+		a.status.SetText(
+			fmt.Sprintf(
+				"Загружено: %s.",
+				locationTitle(info.Location),
+			),
+		)
+	}
+
+	if info.WeatherError != "" {
+		a.weather.SetText(
+			"Не удалось получить погоду: " +
+				info.WeatherError,
+		)
+	} else {
+		a.weather.SetText(
+			fmt.Sprintf(
+				"%s\n"+
+					"Температура: %.1f °C\n"+
+					"Ощущается как: %.1f °C\n"+
+					"Влажность: %d %%\n"+
+					"Ветер: %.1f м/с",
+				info.Weather.Description,
+				info.Weather.TemperatureC,
+				info.Weather.FeelsLikeC,
+				info.Weather.HumidityPct,
+				info.Weather.WindSpeedMPS,
+			),
+		)
+	}
+
+	if info.PlacesError != "" {
+		a.setPlacesMessage(
+			"Не удалось получить места поблизости: " +
+				info.PlacesError,
+		)
+		return
+	}
 
 	a.showPlaceCards(info.Places)
 }

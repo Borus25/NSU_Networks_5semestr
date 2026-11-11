@@ -15,12 +15,16 @@ import (
 	"github.com/reactivex/rxgo/v2"
 )
 
+const maxBodySize = 64 * 1024 * 1024
+
 type Response struct {
 	StatusCode int
 	Body       []byte
 }
 
-type Client struct{ httpClient *http.Client }
+type Client struct {
+	httpClient *http.Client
+}
 
 func New(httpClient *http.Client) *Client {
 	if httpClient == nil {
@@ -47,7 +51,7 @@ func (c *Client) startGET(ctx context.Context, endpoint string, headers http.Hea
 		finish(rxgo.Error(err))
 		return result
 	}
-	if maxBodyBytes <= 0 || maxBodyBytes > 64*1024*1024 {
+	if maxBodyBytes <= 0 || maxBodyBytes > maxBodySize {
 		finish(rxgo.Error(fmt.Errorf("invalid HTTP body size limit")))
 		return result
 	}
@@ -100,7 +104,7 @@ func (c *Client) startGET(ctx context.Context, endpoint string, headers http.Hea
 		}
 		finish(rxgo.Error(fmt.Errorf("asynchronous HTTP request failed: %w", err)))
 	})
-	if err := collector.Request(http.MethodGet, endpoint, nil, nil, headers.Clone()); err != nil {
+	if err = collector.Request(http.MethodGet, endpoint, nil, nil, headers.Clone()); err != nil {
 		// A scheduling error can contain the endpoint. Preserve its type, not secrets.
 		finish(rxgo.Error(fmt.Errorf("cannot schedule HTTP request: %T", err)))
 	}

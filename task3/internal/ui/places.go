@@ -27,9 +27,7 @@ func (a *App) setPlacesMessage(message string) {
 
 // showPlaceCards отображает уже загруженные описания.
 // Новых HTTP-запросов здесь нет.
-func (a *App) showPlaceCards(
-	descriptions []model.PlaceDescription,
-) {
+func (a *App) showPlaceCards(descriptions []model.PlaceDescription) {
 	if len(descriptions) == 0 {
 		a.setPlacesMessage("Объекты поблизости не найдены.")
 		return
@@ -46,45 +44,29 @@ func (a *App) showPlaceCards(
 		}
 
 		summary := strings.TrimSpace(description.Summary)
-		if summary == "" {
+
+		if description.DescriptionError != "" {
+			summary = description.DescriptionError
+		} else if summary == "" {
 			summary = "Краткое описание отсутствует."
 		}
 
-		titleLabel := widget.NewLabel(
-			fmt.Sprintf("%d. %s", i+1, title),
-		)
+		titleLabel := widget.NewLabel(fmt.Sprintf("%d. %s", i+1, title))
 		titleLabel.TextStyle = fyne.TextStyle{Bold: true}
 		titleLabel.Wrapping = fyne.TextWrapWord
 
-		distanceLabel := widget.NewLabel(
-			fmt.Sprintf(
-				"Расстояние: %.0f м",
-				description.Place.DistanceM,
-			),
-		)
+		distanceLabel := widget.NewLabel(fmt.Sprintf("Расстояние: %.0f м", description.Place.DistanceM))
 
 		summaryLabel := widget.NewLabel(summary)
 		summaryLabel.Wrapping = fyne.TextWrapWord
 
 		// Текстовая часть карточки.
-		textContent := container.NewVBox(
-			titleLabel,
-			distanceLabel,
-			summaryLabel,
-		)
+		textContent := container.NewVBox(titleLabel, distanceLabel, summaryLabel)
 
-		articleURL, err := wikipediaArticleURL(
-			a.wikipediaAPIURL,
-			description.Place.PageID,
-		)
+		articleURL, err := wikipediaArticleURL(a.wikipediaAPIURL, description.Place.PageID)
 
 		if err == nil {
-			textContent.Add(
-				widget.NewHyperlink(
-					"Открыть статью в Википедии",
-					articleURL,
-				),
-			)
+			textContent.Add(widget.NewHyperlink("Открыть статью в Википедии", articleURL))
 		}
 
 		var photoContent fyne.CanvasObject
@@ -97,14 +79,11 @@ func (a *App) showPlaceCards(
 			// Центрирование сохраняет заданный размер области фото,
 			// даже если текстовая часть карточки значительно выше.
 			photoContent = container.NewCenter(photo)
-		} else {
-			// Если фотографии нет, не резервируем справа
-			// большую пустую область.
+		} else if description.DescriptionError == "" {
 			message := "У статьи нет фотографии."
 
 			if description.ImageError != "" {
-				message = "Не удалось загрузить фотографию: " +
-					description.ImageError
+				message = "Не удалось загрузить фотографию: " + description.ImageError
 			}
 
 			imageStatus := widget.NewLabel(message)
@@ -113,26 +92,20 @@ func (a *App) showPlaceCards(
 			textContent.Add(imageStatus)
 		}
 
-		content := container.NewBorder(
-			nil,          // Сверху.
+		content := container.NewBorder(nil, // Сверху.
 			nil,          // Снизу.
 			nil,          // Слева.
 			photoContent, // Справа — фотография.
 			textContent,  // В центре — текст.
 		)
 
-		a.placesBox.Add(
-			widget.NewCard("", "", content),
-		)
+		a.placesBox.Add(widget.NewCard("", "", content))
 	}
 }
 
 // Для используемого нами endpoint /w/api.php
 // строим адрес /w/index.php?curid=PAGE_ID.
-func wikipediaArticleURL(
-	apiURL string,
-	pageID int64,
-) (*url.URL, error) {
+func wikipediaArticleURL(apiURL string, pageID int64) (*url.URL, error) {
 	if pageID <= 0 {
 		return nil, fmt.Errorf("invalid Wikipedia page ID")
 	}

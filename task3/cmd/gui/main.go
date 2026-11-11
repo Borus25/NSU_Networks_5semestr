@@ -13,6 +13,11 @@ import (
 	"task3/internal/ui"
 )
 
+const (
+	radius = 5000
+	count  = 10
+)
+
 func main() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
 
@@ -30,11 +35,7 @@ func run() error {
 
 	httpClient := &http.Client{
 		Timeout: cfg.HTTPTimeout,
-
-		CheckRedirect: func(
-			req *http.Request,
-			via []*http.Request,
-		) error {
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
 	}
@@ -57,18 +58,14 @@ func run() error {
 		cfg.Wikipedia,
 	)
 
-	svc := service.New(
-		graphHopper,
-		openWeather,
-		wikipedia,
-	)
+	svc := service.New(graphHopper, openWeather, wikipedia)
 
 	gui := ui.New(
 		svc,
 		cfg.OperationTimeout,
 		service.DetailsOptions{
-			RadiusM: 5000,
-			Limit:   10,
+			RadiusM: radius,
+			Limit:   count,
 			Workers: cfg.DetailsWorkers,
 		},
 		cfg.Wikipedia.APIURL,

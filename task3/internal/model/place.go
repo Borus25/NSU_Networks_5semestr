@@ -10,12 +10,12 @@ type PlaceRef struct {
 }
 
 type PlaceDescription struct {
-	Place   PlaceRef
-	Summary string
-
-	ImageURL   string
-	Image      image.Image
-	ImageError string
+	Place            PlaceRef
+	Summary          string
+	DescriptionError string
+	ImageURL         string
+	Image            image.Image
+	ImageError       string
 }
 
 type PlaceImage struct {

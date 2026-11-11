@@ -97,48 +97,112 @@ func (s *Service) loadNearbyDescriptions(ctx context.Context, coordinates model.
 
 func (s *Service) LoadLocationInfo(ctx context.Context, location model.Location, options DetailsOptions) rxgo.Observable {
 	if options.Workers <= 0 {
-		return rxgo.Thrown(fmt.Errorf("description workers must be > 0"))
+		return rxgo.Thrown(
+			fmt.Errorf("description workers must be > 0"),
+		)
 	}
+
 	if options.RadiusM < 10 || options.RadiusM > 10000 {
-		return rxgo.Thrown(fmt.Errorf("search radius must be between 10 and 10000 meters"))
+		return rxgo.Thrown(
+			fmt.Errorf(
+				"search radius must be between 10 and 10000 meters",
+			),
+		)
 	}
+
 	if options.Limit < 1 || options.Limit > 500 {
-		return rxgo.Thrown(fmt.Errorf("search limit must be between 1 and 500"))
+		return rxgo.Thrown(
+			fmt.Errorf(
+				"search limit must be between 1 and 500",
+			),
+		)
 	}
-	return rxutil.Defer(ctx, func(scope context.Context) rxgo.Observable {
-		weather := s.LoadWeather(scope, location.Coordinates)
-		places := s.loadNearbyDescriptions(scope, location.Coordinates, options)
-		// Merge reports failure from EITHER branch immediately. Defer cancels the sibling.
-		return rxgo.Merge([]rxgo.Observable{weather, places}, rxgo.WithContext(scope), rxgo.WithBufferedChannel(4)).
-			BufferWithCount(2, rxgo.WithContext(scope)).Map(func(_ context.Context, value any) (any, error) {
-			buffer, ok := value.([]any)
-			if !ok || len(buffer) != 2 {
-				return nil, fmt.Errorf("incomplete location info")
-			}
-			result := model.LocationInfo{Location: location}
-			weatherSeen, placesSeen := false, false
-			for _, part := range buffer {
-				switch typed := part.(type) {
-				case model.Weather:
-					if weatherSeen {
-						return nil, fmt.Errorf("duplicate weather result")
+
+	return rxutil.Defer(
+		ctx,
+		func(scope context.Context) rxgo.Observable {
+			weather := s.loadWeatherOutcome(
+				scope,
+				location.Coordinates,
+			)
+
+			places := s.loadPlacesOutcome(
+				scope,
+				location.Coordinates,
+				options,
+			)
+
+			return rxgo.Merge(
+				[]rxgo.Observable{
+					weather,
+					places,
+				},
+				rxgo.WithContext(scope),
+				rxgo.WithBufferedChannel(4),
+			).BufferWithCount(
+				2,
+				rxgo.WithContext(scope),
+			).Map(
+				func(
+					_ context.Context,
+					value any,
+				) (any, error) {
+					parts, ok := value.([]any)
+					if !ok || len(parts) != 2 {
+						return nil, fmt.Errorf(
+							"incomplete location report",
+						)
 					}
-					result.Weather = typed
-					weatherSeen = true
-				case []model.PlaceDescription:
-					if placesSeen {
-						return nil, fmt.Errorf("duplicate places result")
+
+					result := model.LocationInfo{
+						Location: location,
+						Places:   []model.PlaceDescription{},
 					}
-					result.Places = typed
-					placesSeen = true
-				default:
-					return nil, fmt.Errorf("unexpected location info part: %T", part)
-				}
-			}
-			if !weatherSeen || !placesSeen {
-				return nil, fmt.Errorf("incomplete location info")
-			}
-			return result, nil
-		}, rxgo.WithContext(scope))
-	})
+
+					var weatherSeen, placesSeen bool
+
+					for _, part := range parts {
+						switch outcome := part.(type) {
+						case weatherOutcome:
+							if weatherSeen {
+								return nil, fmt.Errorf(
+									"duplicate weather outcome",
+								)
+							}
+
+							weatherSeen = true
+							result.Weather = outcome.Value
+							result.WeatherError = outcome.Error
+
+						case placesOutcome:
+							if placesSeen {
+								return nil, fmt.Errorf(
+									"duplicate places outcome",
+								)
+							}
+
+							placesSeen = true
+							result.Places = outcome.Value
+							result.PlacesError = outcome.Error
+
+						default:
+							return nil, fmt.Errorf(
+								"unexpected report part: %T",
+								part,
+							)
+						}
+					}
+
+					if !weatherSeen || !placesSeen {
+						return nil, fmt.Errorf(
+							"missing report outcome",
+						)
+					}
+
+					return result, nil
+				},
+				rxgo.WithContext(scope),
+			)
+		},
+	)
 }
