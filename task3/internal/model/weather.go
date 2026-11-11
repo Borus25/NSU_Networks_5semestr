@@ -6,4 +6,5 @@ type Weather struct {
 	HumidityPct  int
 	WindSpeedMPS float64
 	Description  string
+	PressureHPa  *float64
 }

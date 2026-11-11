@@ -76,8 +76,8 @@ func (c *Client) startGET(ctx context.Context, endpoint string, headers http.Hea
 		response.Headers.Set("Content-Type", "application/octet-stream")
 	})
 	collector.OnResponse(func(response *colly.Response) {
-		if err = ctx.Err(); err != nil {
-			finish(rxgo.Error(err))
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			finish(rxgo.Error(ctxErr))
 			return
 		}
 		if response.StatusCode != http.StatusOK {
@@ -104,9 +104,8 @@ func (c *Client) startGET(ctx context.Context, endpoint string, headers http.Hea
 		}
 		finish(rxgo.Error(fmt.Errorf("asynchronous HTTP request failed: %w", err)))
 	})
-	if err = collector.Request(http.MethodGet, endpoint, nil, nil, headers.Clone()); err != nil {
-		// A scheduling error can contain the endpoint. Preserve its type, not secrets.
-		finish(rxgo.Error(fmt.Errorf("cannot schedule HTTP request: %T", err)))
+	if requestErr := collector.Request(http.MethodGet, endpoint, nil, nil, headers.Clone()); requestErr != nil {
+		finish(rxgo.Error(fmt.Errorf("cannot schedule HTTP request: %T", requestErr)))
 	}
 	return result
 }

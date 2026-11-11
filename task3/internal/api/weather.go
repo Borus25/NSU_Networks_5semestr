@@ -13,9 +13,10 @@ import (
 
 type currentWeatherResponse struct {
 	Main *struct {
-		Temperature float64 `json:"temp"`
-		FeelsLike   float64 `json:"feels_like"`
-		Humidity    int     `json:"humidity"`
+		Temperature float64  `json:"temp"`
+		FeelsLike   float64  `json:"feels_like"`
+		Humidity    int      `json:"humidity"`
+		Pressure    *float64 `json:"pressure"`
 	} `json:"main"`
 
 	Wind *struct {
@@ -58,6 +59,7 @@ func (c *OpenWeatherClient) LoadWeather(ctx context.Context, coordinates model.C
 			HumidityPct:  response.Main.Humidity,
 			WindSpeedMPS: response.Wind.Speed,
 			Description:  response.Weather[0].Description,
+			PressureHPa:  response.Main.Pressure,
 		}, nil
 	}, rxgo.WithContext(ctx))
 }

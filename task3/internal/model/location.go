@@ -12,5 +12,7 @@ type Location struct {
 	City        string
 	Street      string
 	HouseNumber string
+	OSMKey      string
+	OSMValue    string
 	Coordinates Coordinates
 }

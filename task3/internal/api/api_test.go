@@ -47,7 +47,7 @@ func TestAPIRequestsAndResponses(t *testing.T) {
 		q := r.URL.Query()
 		switch r.URL.Path {
 		case "/geocode":
-			if q.Get("q") != "Цветной проезд & дом" || q.Get("key") != "key" || q.Get("locale") != "ru" || q.Get("limit") != "5" {
+			if q.Get("q") != "Цветной проезд & дом" || q.Get("key") != "key" || q.Get("locale") != "ru" || q.Get("limit") != "10" {
 				t.Errorf("unexpected query %v", q)
 			}
 			_, _ = io.WriteString(w, `{"hits":[{"name":"Дом","city":"Новосибирск","point":{"lat":54.8,"lng":83.1}}]}`)
@@ -281,7 +281,7 @@ func TestRealHTTPGraphStartsEveryDescriptionAndPublishesOnce(t *testing.T) {
 	client := asynchttp.New(server.Client())
 	svc := service.New(nil, NewOpenWeatherClient(client, config.OpenWeatherConfig{WeatherURL: server.URL + "/weather"}), NewWikipediaClient(client, config.WikipediaConfig{APIURL: server.URL + "/wiki", UserAgent: "test"}))
 	items := svc.LoadLocationInfo(ctx, model.Location{Name: "chosen"}, service.DetailsOptions{RadiusM: 1000, Limit: count}).Observe()
-	for i := 0; i < count; i++ {
+	for range count {
 		select {
 		case <-descriptions:
 		case <-ctx.Done():
@@ -382,7 +382,7 @@ func TestCancellationOfRealHTTPGraph(t *testing.T) {
 	client := asynchttp.New(server.Client())
 	svc := service.New(nil, NewOpenWeatherClient(client, config.OpenWeatherConfig{WeatherURL: server.URL + "/weather"}), NewWikipediaClient(client, config.WikipediaConfig{APIURL: server.URL + "/wiki", UserAgent: "test"}))
 	items := svc.LoadLocationInfo(ctx, model.Location{}, service.DetailsOptions{RadiusM: 1000, Limit: 5}).Observe()
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		select {
 		case <-started:
 		case <-time.After(2 * time.Second):
@@ -390,7 +390,7 @@ func TestCancellationOfRealHTTPGraph(t *testing.T) {
 		}
 	}
 	cancel()
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		select {
 		case <-stopped:
 		case <-time.After(2 * time.Second):

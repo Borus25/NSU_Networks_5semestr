@@ -31,8 +31,8 @@ func (c *WikipediaClient) loadThumbnail(ctx context.Context, source string) rxgo
 	headers := http.Header{"User-Agent": {c.cfg.UserAgent}, "Accept": {"image/jpeg, image/png"}}
 	return c.httpClient.Get(ctx, u.String(), headers, maxThumbnailBytes).Map(
 		func(ctx context.Context, value any) (any, error) {
-			if err = ctx.Err(); err != nil {
-				return nil, err
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
 			}
 			data := value.(asynchttp.Response).Body
 			config, _, err := image.DecodeConfig(bytes.NewReader(data))
@@ -47,8 +47,8 @@ func (c *WikipediaClient) loadThumbnail(ctx context.Context, source string) rxgo
 			if err != nil {
 				return nil, fmt.Errorf("decode thumbnail: %w", err)
 			}
-			if err = ctx.Err(); err != nil {
-				return nil, err
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
 			}
 			return decoded, nil
 		}, rxgo.WithContext(ctx))

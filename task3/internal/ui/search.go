@@ -6,7 +6,9 @@ import (
 	"strings"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"task3/internal/model"
@@ -91,26 +93,69 @@ func (a *App) showLocations(locations []model.Location) {
 		return
 	}
 
+	backgrounds := make([]*canvas.Rectangle, len(locations))
+	labels := make([]*widget.Label, len(locations))
+	buttons := make([]*widget.Button, len(locations))
+
+	selectedIndex := -1
+
+	selectRow := func(index int) {
+		// Снимаем прежнее выделение.
+		if selectedIndex >= 0 {
+			backgrounds[selectedIndex].Hide()
+
+			labels[selectedIndex].TextStyle.Bold = false
+			labels[selectedIndex].Refresh()
+
+			buttons[selectedIndex].SetText("Выбрать")
+		}
+
+		selectedIndex = index
+
+		// Выделяем новую строку.
+		backgrounds[index].FillColor = theme.Color(
+			theme.ColorNameSelection,
+		)
+		backgrounds[index].Show()
+		backgrounds[index].Refresh()
+
+		labels[index].TextStyle.Bold = true
+		labels[index].Refresh()
+
+		buttons[index].SetText("Выбрано")
+	}
+
 	for i, location := range locations {
-		// Отдельное значение для обработчика этой кнопки.
+		index := i
 		selected := location
 
 		label := widget.NewLabel(
 			fmt.Sprintf(
-				"%d. %s\nКоординаты: %.6f, %.6f",
+				"%d. %s\nТип объекта: %s\nКоординаты: %.6f, %.6f",
 				i+1,
 				locationTitle(selected),
+				locationType(selected),
 				selected.Coordinates.Lat,
 				selected.Coordinates.Lon,
 			),
 		)
 		label.Wrapping = fyne.TextWrapWord
 
+		labels[index] = label
+
+		background := canvas.NewRectangle(
+			theme.Color(theme.ColorNameSelection),
+		)
+		background.Hide()
+		backgrounds[index] = background
+
 		button := widget.NewButton("Выбрать", func() {
+			selectRow(index)
 			a.onLocationSelected(selected)
 		})
+		buttons[index] = button
 
-		row := container.NewBorder(
+		content := container.NewBorder(
 			nil,
 			nil,
 			nil,
@@ -118,6 +163,12 @@ func (a *App) showLocations(locations []model.Location) {
 			label,
 		)
 
+		row := container.NewStack(
+			background,
+			container.NewPadded(content),
+		)
+
+		// Добавляем строку только один раз.
 		a.locationsBox.Add(row)
 		a.locationsBox.Add(widget.NewSeparator())
 	}

@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	limitCountResults = 5
+	limitCountResults = 10
 	maxBodySize       = 2 * 1024 * 1024
 )
 
@@ -32,6 +32,8 @@ type graphHopperLocation struct {
 	State       string            `json:"state"`
 	City        string            `json:"city"`
 	Street      string            `json:"street"`
+	OSMKey      string            `json:"osm_key"`
+	OSMValue    string            `json:"osm_value"`
 	HouseNumber string            `json:"housenumber"`
 	Point       *graphHopperPoint `json:"point"`
 }
@@ -70,6 +72,8 @@ func (c *GraphHopperClient) SearchLocations(ctx context.Context, query string) r
 				City:        hit.City,
 				Street:      hit.Street,
 				HouseNumber: hit.HouseNumber,
+				OSMKey:      hit.OSMKey,
+				OSMValue:    hit.OSMValue,
 				Coordinates: model.Coordinates{
 					Lat: hit.Point.Lat,
 					Lon: hit.Point.Lng,

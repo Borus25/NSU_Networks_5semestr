@@ -96,18 +96,32 @@ func (a *App) showLocationInfo(info model.LocationInfo) {
 				info.WeatherError,
 		)
 	} else {
+		const hPaToMmHg = 0.7500616
+
+		pressureText := "нет данных"
+		if info.Weather.PressureHPa != nil {
+			pressureMmHg := *info.Weather.PressureHPa * hPaToMmHg
+
+			pressureText = fmt.Sprintf(
+				"%.0f мм рт. ст.",
+				pressureMmHg,
+			)
+		}
+
 		a.weather.SetText(
 			fmt.Sprintf(
 				"%s\n"+
 					"Температура: %.1f °C\n"+
 					"Ощущается как: %.1f °C\n"+
 					"Влажность: %d %%\n"+
-					"Ветер: %.1f м/с",
+					"Ветер: %.1f м/с\n"+
+					"Давление на уровне моря: %s",
 				info.Weather.Description,
 				info.Weather.TemperatureC,
 				info.Weather.FeelsLikeC,
 				info.Weather.HumidityPct,
 				info.Weather.WindSpeedMPS,
+				pressureText,
 			),
 		)
 	}
