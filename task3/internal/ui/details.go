@@ -3,7 +3,6 @@ package ui
 import (
 	"context"
 	"fmt"
-	"task3/internal/service"
 
 	"fyne.io/fyne/v2"
 
@@ -43,85 +42,26 @@ func (a *App) onLocationSelected(location model.Location) {
 	a.weather.SetText("Загрузка погоды...")
 	a.setPlacesMessage("Загрузка мест и описаний...")
 
-	go func() {
-		defer cancel()
-
-		info, err := a.awaitLocationInfo(ctx, location, options)
-
+	subscribeResult(ctx, a.service.LoadLocationInfo(ctx, location, options), func(info model.LocationInfo, err error) {
+		cancel()
 		fyne.Do(func() {
 			if a.closed || requestID != a.detailsID {
 				return
 			}
-
 			a.detailsCancel = nil
 			a.updateBusy()
-
 			if err != nil {
-				a.status.SetText(
-					fmt.Sprintf(
-						"Ошибка загрузки: %s",
-						operationErrorText(err),
-					),
-				)
-
-				a.weather.SetText(
-					"Не удалось загрузить общий результат.",
-				)
-				a.setPlacesMessage(
-					"Попробуйте выбрать локацию ещё раз.",
-				)
+				a.status.SetText(fmt.Sprintf("Ошибка загрузки: %s", operationErrorText(err)))
+				a.weather.SetText("Не удалось загрузить общий результат.")
+				a.setPlacesMessage("Попробуйте выбрать локацию ещё раз.")
 				return
 			}
-
 			a.showLocationInfo(info)
 		})
-	}()
+	})
 }
 
-func (a *App) awaitLocationInfo(
-	ctx context.Context,
-	location model.Location,
-	options service.DetailsOptions,
-) (model.LocationInfo, error) {
-	items := a.service.LoadLocationInfo(
-		ctx,
-		location,
-		options,
-	).Observe()
-
-	select {
-	case <-ctx.Done():
-		return model.LocationInfo{}, ctx.Err()
-
-	case item, ok := <-items:
-		if !ok {
-			if err := ctx.Err(); err != nil {
-				return model.LocationInfo{}, err
-			}
-
-			return model.LocationInfo{}, fmt.Errorf(
-				"location info completed without a result",
-			)
-		}
-
-		if item.Error() {
-			return model.LocationInfo{}, item.E
-		}
-
-		info, ok := item.V.(model.LocationInfo)
-		if !ok {
-			return model.LocationInfo{}, fmt.Errorf(
-				"unexpected location info type: %T",
-				item.V,
-			)
-		}
-
-		return info, nil
-	}
-}
-
-// Вызывается только в UI-контексте.
-// Вызывается только в UI-контексте.
+// Only the COMPLETE report is published; no intermediate network results reach widgets.
 func (a *App) showLocationInfo(info model.LocationInfo) {
 	hasErrors := info.WeatherError != "" ||
 		info.PlacesError != ""

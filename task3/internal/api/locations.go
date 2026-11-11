@@ -14,6 +14,7 @@ import (
 
 const (
 	limitCountResults = 5
+	maxBodySize       = 2 * 1024 * 1024
 )
 
 type graphHopperGeocodingResponse struct {
@@ -54,7 +55,7 @@ func (c *GraphHopperClient) SearchLocations(ctx context.Context, query string) r
 	u.RawQuery = params.Encode()
 	headers := http.Header{"Accept": {"application/json"}}
 
-	return decodeJSON[graphHopperGeocodingResponse](ctx, c.httpClient.Get(ctx, u.String(), headers, 2*1024*1024)).Map(func(_ context.Context, value any) (any, error) {
+	return decodeJSON[graphHopperGeocodingResponse](ctx, c.httpClient.Get(ctx, u.String(), headers, maxBodySize)).Map(func(_ context.Context, value any) (any, error) {
 		response := value.(graphHopperGeocodingResponse)
 		locations := make([]model.Location, 0, len(response.Hits))
 		for i, hit := range response.Hits {

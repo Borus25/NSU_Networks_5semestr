@@ -18,7 +18,6 @@ type ConfigDetails struct {
 
 	HTTPTimeout      time.Duration
 	OperationTimeout time.Duration
-	DetailsWorkers   int
 }
 
 type OpenWeatherConfig struct {
@@ -90,7 +89,6 @@ func Load() (ConfigDetails, error) {
 
 		HTTPTimeout:      10 * time.Second,
 		OperationTimeout: 30 * time.Second,
-		DetailsWorkers:   4,
 	}
 
 	if err = cfg.validate(); err != nil {
@@ -135,10 +133,6 @@ func (cfg ConfigDetails) validate() error {
 
 	if cfg.OperationTimeout < cfg.HTTPTimeout {
 		return fmt.Errorf("OperationTimeout must be >= HTTPTimeout")
-	}
-
-	if cfg.DetailsWorkers <= 0 {
-		return fmt.Errorf("DetailsWorkers must be > 0")
 	}
 
 	return nil

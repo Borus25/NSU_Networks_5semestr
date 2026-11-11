@@ -76,7 +76,7 @@ func (c *Client) startGET(ctx context.Context, endpoint string, headers http.Hea
 		response.Headers.Set("Content-Type", "application/octet-stream")
 	})
 	collector.OnResponse(func(response *colly.Response) {
-		if err := ctx.Err(); err != nil {
+		if err = ctx.Err(); err != nil {
 			finish(rxgo.Error(err))
 			return
 		}

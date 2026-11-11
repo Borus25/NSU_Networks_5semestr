@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"image"
+	_ "image/jpeg"
+	_ "image/png"
 	"net/http"
 	"net/url"
 	"task3/internal/asynchttp"
@@ -29,7 +31,7 @@ func (c *WikipediaClient) loadThumbnail(ctx context.Context, source string) rxgo
 	headers := http.Header{"User-Agent": {c.cfg.UserAgent}, "Accept": {"image/jpeg, image/png"}}
 	return c.httpClient.Get(ctx, u.String(), headers, maxThumbnailBytes).Map(
 		func(ctx context.Context, value any) (any, error) {
-			if err := ctx.Err(); err != nil {
+			if err = ctx.Err(); err != nil {
 				return nil, err
 			}
 			data := value.(asynchttp.Response).Body
@@ -45,7 +47,7 @@ func (c *WikipediaClient) loadThumbnail(ctx context.Context, source string) rxgo
 			if err != nil {
 				return nil, fmt.Errorf("decode thumbnail: %w", err)
 			}
-			if err := ctx.Err(); err != nil {
+			if err = ctx.Err(); err != nil {
 				return nil, err
 			}
 			return decoded, nil

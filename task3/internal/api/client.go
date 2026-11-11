@@ -16,11 +16,14 @@ func decodeJSON[T any](ctx context.Context, source rxgo.Observable) rxgo.Observa
 			return nil, fmt.Errorf("unexpected HTTP result: %T", value)
 		}
 
-		var decoded T
+		var decoded *T
 		if err := json.Unmarshal(response.Body, &decoded); err != nil {
 			return nil, fmt.Errorf("decode API response: %w", err)
 		}
 
-		return decoded, nil
+		if decoded == nil {
+			return nil, fmt.Errorf("API response must not be null")
+		}
+		return *decoded, nil
 	}, rxgo.WithContext(ctx))
 }

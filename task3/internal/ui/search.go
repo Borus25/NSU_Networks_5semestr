@@ -57,79 +57,24 @@ func (a *App) onSearch() {
 
 	a.status.SetText("Поиск локаций...")
 
-	// Сетевое ожидание выполняется вне UI-контекста.
-	go func() {
-		defer cancel()
-
-		locations, err := a.awaitLocations(ctx, query)
-
-		// Проверяем актуальность и обновляем виджеты
-		// только в UI-контексте.
+	// Subscribe without waiting for a result in the GUI thread or a manual waiter.
+	subscribeResult(ctx, a.service.SearchLocations(ctx, query), func(locations []model.Location, err error) {
+		cancel()
 		fyne.Do(func() {
 			if a.closed || requestID != a.searchID {
 				return
 			}
-
 			a.searchCancel = nil
-
 			a.updateBusy()
-
 			if err != nil {
 				a.locationsBox.Objects = nil
-				a.locationsBox.Add(
-					widget.NewLabel("Не удалось получить локации."),
-				)
-
-				a.status.SetText(
-					fmt.Sprintf("Ошибка поиска: %s", operationErrorText(err)),
-				)
+				a.locationsBox.Add(widget.NewLabel("Не удалось получить локации."))
+				a.status.SetText(fmt.Sprintf("Ошибка поиска: %s", operationErrorText(err)))
 				return
 			}
-
 			a.showLocations(locations)
 		})
-	}()
-}
-
-// awaitLocations ожидает единственный результат операции:
-// список локаций либо ошибку.
-//
-// Вызывается из фоновой горутины, виджеты не изменяет.
-func (a *App) awaitLocations(
-	ctx context.Context,
-	query string,
-) ([]model.Location, error) {
-	items := a.service.SearchLocations(ctx, query).Observe()
-
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-
-	case item, ok := <-items:
-		if !ok {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-
-			return nil, fmt.Errorf(
-				"search completed without a result",
-			)
-		}
-
-		if item.Error() {
-			return nil, item.E
-		}
-
-		locations, ok := item.V.([]model.Location)
-		if !ok {
-			return nil, fmt.Errorf(
-				"unexpected search result type: %T",
-				item.V,
-			)
-		}
-
-		return locations, nil
-	}
+	})
 }
 
 // showLocations отображает варианты с кнопками выбора.

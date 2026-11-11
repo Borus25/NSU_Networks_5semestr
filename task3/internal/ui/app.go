@@ -121,10 +121,6 @@ func (a *App) build() {
 		"Здесь появятся объекты поблизости и их описания.",
 	)
 	a.places.Wrapping = fyne.TextWrapWord
-	a.places = widget.NewLabel(
-		"Здесь появятся объекты поблизости и их описания.",
-	)
-	a.places.Wrapping = fyne.TextWrapWord
 
 	a.placesBox = container.NewVBox()
 

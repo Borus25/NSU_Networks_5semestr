@@ -13,48 +13,24 @@ import (
 type DetailsOptions struct {
 	RadiusM int
 	Limit   int
-	Workers int
 }
 
-// Each lane subscribes to at most one description at a time.
-// A slot stays occupied through BOTH the article request and thumbnail request.
-func (s *Service) describePlaces(ctx context.Context, places []model.PlaceRef, workers int) rxgo.Observable {
+// Every description is independent after GeoSearch completes: subscribe to ALL
+// of them concurrently. Each inner chain includes its optional thumbnail.
+func (s *Service) describePlaces(ctx context.Context, places []model.PlaceRef) rxgo.Observable {
 	return rxutil.Defer(ctx, func(scope context.Context) rxgo.Observable {
 		if len(places) == 0 {
 			return rxutil.Value(scope, []model.PlaceDescription{})
 		}
-		if workers > len(places) {
-			workers = len(places)
+		sources := make([]rxgo.Observable, 0, len(places))
+		for _, place := range places {
+			sources = append(sources, s.LoadPlaceDescription(scope, place))
 		}
-		lanes := make([]rxgo.Observable, 0, workers)
-		for lane := 0; lane < workers; lane++ {
-			refs := make([]model.PlaceRef, 0)
-			for index := lane; index < len(places); index += workers {
-				refs = append(refs, places[index])
-			}
-			source := rxgo.Defer([]rxgo.Producer{func(ctx context.Context, out chan<- rxgo.Item) {
-				for _, ref := range refs {
-					if !rxgo.Of(ref).SendContext(ctx, out) {
-						return
-					}
-				}
-			}}, rxgo.WithContext(scope))
-			// RxGo v2.5 FlatMap consumes one inner Observable to completion.
-			lanes = append(lanes, source.FlatMap(func(item rxgo.Item) rxgo.Observable {
-				if item.Error() {
-					return rxgo.Thrown(item.E)
-				}
-				place, ok := item.V.(model.PlaceRef)
-				if !ok {
-					return rxgo.Thrown(fmt.Errorf("unexpected place type: %T", item.V))
-				}
-				return s.LoadPlaceDescription(scope, place)
-			}, rxgo.WithContext(scope)))
-		}
-		// RxGo v2.5 Merge sends without a cancellation select. Bound its output
-		// by the maximum number of events so early cancellation cannot strand senders.
-		return rxgo.Merge(lanes, rxgo.WithContext(scope), rxgo.WithBufferedChannel(len(places)+workers)).
-			BufferWithCount(len(places), rxgo.WithContext(scope)).Map(
+		// RxGo v2.5 Merge sends without a cancellation select. Every source
+		// emits at most one event; enough buffering also makes early cancellation safe.
+		return rxgo.Merge(sources, rxgo.WithContext(scope), rxgo.WithBufferedChannel(len(places))).
+			BufferWithCount(len(places), rxgo.WithContext(scope)).
+			DefaultIfEmpty([]any{}, rxgo.WithContext(scope)).Map(
 			func(_ context.Context, value any) (any, error) {
 				buffer, ok := value.([]any)
 				if !ok || len(buffer) != len(places) {
@@ -90,18 +66,12 @@ func (s *Service) loadNearbyDescriptions(ctx context.Context, coordinates model.
 				if !ok {
 					return rxgo.Thrown(fmt.Errorf("unexpected nearby places type: %T", item.V))
 				}
-				return s.describePlaces(scope, places, options.Workers)
+				return s.describePlaces(scope, places)
 			}, rxgo.WithContext(scope))
 	})
 }
 
 func (s *Service) LoadLocationInfo(ctx context.Context, location model.Location, options DetailsOptions) rxgo.Observable {
-	if options.Workers <= 0 {
-		return rxgo.Thrown(
-			fmt.Errorf("description workers must be > 0"),
-		)
-	}
-
 	if options.RadiusM < 10 || options.RadiusM > 10000 {
 		return rxgo.Thrown(
 			fmt.Errorf(

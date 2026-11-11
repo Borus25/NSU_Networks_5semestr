@@ -35,6 +35,5 @@ func restoreDetailsOptions(
 		options.Limit = limit
 	}
 
-	// Workers остаётся из конфигурации приложения.
 	return options
 }

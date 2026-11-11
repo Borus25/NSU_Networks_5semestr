@@ -66,7 +66,6 @@ func run() error {
 		service.DetailsOptions{
 			RadiusM: radius,
 			Limit:   count,
-			Workers: cfg.DetailsWorkers,
 		},
 		cfg.Wikipedia.APIURL,
 	)
